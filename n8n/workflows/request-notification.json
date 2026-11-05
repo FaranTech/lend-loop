@@ -1,0 +1,58 @@
+{
+  "name": "LendLoop - signed request notifications",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lendloop-request",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "21a51ac9-36bc-43b7-b68a-69382764dd93",
+      "name": "Request event webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 300],
+      "webhookId": "lendloop-request-notification"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const crypto = require('crypto');\nconst event = $json.body ?? $json;\nconst timestamp = String($json.headers?.['x-lendloop-timestamp'] ?? '');\nconst signature = String($json.headers?.['x-lendloop-signature'] ?? '');\nconst now = Math.floor(Date.now() / 1000);\nif (!/^\\d{10}$/.test(timestamp) || Math.abs(now - Number(timestamp)) > 300) throw new Error('Rejected stale or invalid LendLoop timestamp');\nconst body = JSON.stringify(event);\nconst expected = crypto.createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nconst suppliedBuffer = Buffer.from(signature, 'hex');\nconst expectedBuffer = Buffer.from(expected, 'hex');\nif (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) throw new Error('Invalid LendLoop HMAC signature');\nif (!event.loanId || !event.event || !event.toolName) throw new Error('Missing minimal request event fields');\nreturn { json: { event: event.event, loanId: event.loanId, toolName: event.toolName, category: event.category, borrowerName: event.borrowerName, borrowerId: event.borrowerId, lenderId: event.lenderId, startDate: event.startDate, endDate: event.endDate, status: event.status, receivedAt: new Date().toISOString() } };"
+      },
+      "id": "d58aab8f-f216-4bab-9ff6-4d05533ff020",
+      "name": "Verify HMAC and minimize payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const { event, toolName, borrowerName, startDate, endDate, status, loanId } = $json;\nconst message = `LendLoop ${event}: ${toolName} (${startDate} to ${endDate}), status ${status}. Request ${loanId}.`;\nconsole.log(JSON.stringify({ notification: message, recipientRole: event === 'requested' ? 'lender' : 'request participants' }));\nreturn { json: { notification: message, loanId, event, status, loggedAt: new Date().toISOString() } };"
+      },
+      "id": "1df7a185-c719-4a14-9e2f-a8ae00c62e53",
+      "name": "Log mock notification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 300]
+    }
+  ],
+  "connections": {
+    "Request event webhook": {
+      "main": [[{ "node": "Verify HMAC and minimize payload", "type": "main", "index": 0 }]]
+    },
+    "Verify HMAC and minimize payload": {
+      "main": [[{ "node": "Log mock notification", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none"
+  },
+  "versionId": "7ef71c65-6bd5-45d2-a7f1-d4b7f5a2ad95",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

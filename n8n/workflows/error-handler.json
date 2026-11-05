@@ -1,0 +1,32 @@
+{
+  "name": "LendLoop - automation error visibility",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "13b2c3ab-c40b-467a-b484-bcf9323bcedf",
+      "name": "Automation error trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const execution = $json.execution ?? {};\nconst workflow = $json.workflow ?? {};\nconst summary = { workflowId: workflow.id, workflowName: workflow.name, executionId: execution.id, url: execution.url, lastNodeExecuted: execution.lastNodeExecuted, error: execution.error?.message ?? 'Unknown n8n workflow error', failedAt: new Date().toISOString() };\nconsole.error(JSON.stringify(summary));\nreturn { json: summary };"
+      },
+      "id": "12a22bfe-dc0d-4c64-9670-e4b5c2815d11",
+      "name": "Log failed execution",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    }
+  ],
+  "connections": {
+    "Automation error trigger": { "main": [[{ "node": "Log failed execution", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1", "saveDataErrorExecution": "all" },
+  "versionId": "761f4f76-faa6-4da9-bcbf-e2d6d26eef46",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}

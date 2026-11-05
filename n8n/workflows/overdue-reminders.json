@@ -1,0 +1,112 @@
+{
+  "name": "LendLoop - daily overdue reminders",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * *" }] }
+      },
+      "id": "fc245bfb-19dc-4a8f-8a77-1f91cd4ef2a2",
+      "name": "Every day at 9am",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 320]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const crypto = require('crypto');\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst signature = crypto.createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.`).digest('hex');\nreturn [{ json: { timestamp, signature } }];"
+      },
+      "id": "ce629f18-f30a-4210-9597-0098db5a8b46",
+      "name": "Sign overdue fetch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 320]
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.CONVEX_HTTP_ACTIONS_URL + '/automation/overdue' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-lendloop-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-lendloop-signature", "value": "={{ $json.signature }}" }
+          ]
+        },
+        "options": { "response": { "response": { "neverError": false } }, "timeout": 30000 }
+      },
+      "id": "297b4385-8a96-43b9-af7d-a0dc891d3c61",
+      "name": "Fetch overdue loans",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 320],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const rows = $input.all().flatMap((item) => {\n  const value = item.json;\n  if (Array.isArray(value)) return value;\n  if (Array.isArray(value?.data)) return value.data;\n  return value?.loanId ? [value] : [];\n});\nreturn rows.map((loan) => ({ json: loan }));"
+      },
+      "id": "877834e1-4a9a-4331-bd2f-c29d9426afab",
+      "name": "Split overdue loans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 320]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const loan = $json;\nif (!loan.loanId || !loan.borrowerId || !loan.idempotencyKey) throw new Error('Overdue response is missing a required field');\nconst reminder = { loanId: loan.loanId, idempotencyKey: loan.idempotencyKey };\nconsole.log(JSON.stringify({ reminder: `Please return ${loan.toolName}, due ${loan.endDate}.`, borrowerId: loan.borrowerId, loanId: loan.loanId, idempotencyKey: loan.idempotencyKey }));\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst body = JSON.stringify(reminder);\nconst signature = require('crypto').createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nreturn { json: { ...reminder, timestamp, signature, mockNotification: `Please return ${loan.toolName}, due ${loan.endDate}.` } };"
+      },
+      "id": "f3484b54-718b-47a2-88e8-92c7a8a06a96",
+      "name": "Prepare reminder and sign write-back",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1140, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CONVEX_HTTP_ACTIONS_URL + '/automation/reminder' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "content-type", "value": "application/json" },
+            { "name": "x-lendloop-timestamp", "value": "={{ $json.timestamp }}" },
+            { "name": "x-lendloop-signature", "value": "={{ $json.signature }}" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ loanId: $json.loanId, idempotencyKey: $json.idempotencyKey }) }}",
+        "options": { "response": { "response": { "neverError": false } }, "timeout": 30000 }
+      },
+      "id": "f272fd7e-2b18-49b3-9bc5-9d8b8b07dd6b",
+      "name": "Record reminder in Convex",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1400, 320],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Every day at 9am": { "main": [[{ "node": "Sign overdue fetch", "type": "main", "index": 0 }]] },
+    "Sign overdue fetch": { "main": [[{ "node": "Fetch overdue loans", "type": "main", "index": 0 }]] },
+    "Fetch overdue loans": { "main": [[{ "node": "Split overdue loans", "type": "main", "index": 0 }]] },
+    "Split overdue loans": { "main": [[{ "node": "Prepare reminder and sign write-back", "type": "main", "index": 0 }]] },
+    "Prepare reminder and sign write-back": { "main": [[{ "node": "Record reminder in Convex", "type": "main", "index": 0 }]] }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none"
+  },
+  "versionId": "b2b783de-6c8c-4950-97d9-c225d8a02c7a",
+  "meta": { "templateCredsSetupCompleted": true },
+  "tags": []
+}
