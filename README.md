@@ -9,7 +9,7 @@ LendLoop is a neighborhood tool-lending board: **Borrow what you need. Lend what
 - Convex server-side authorization for ownership, lender/borrower participation, and administrator actions. Admin role is a signed Clerk JWT claim, not a client-provided flag.
 - Signed Convex-to-n8n request/status events and signed n8n-to-Convex overdue fetch/write-back endpoints.
 - Daily overdue workflow with retry behavior, idempotency keys, activity entries, and a separate n8n error workflow.
-- Docker Compose for a local n8n + PostgreSQL setup. Email/chat delivery is a logged mock notification; connect a provider credential and delivery node to send real notifications.
+- Docker Compose for a local n8n + PostgreSQL setup. The exported workflows send email when configured with an SMTP credential; credentials are not included in the exports.
 
 ## Local setup
 
@@ -104,12 +104,14 @@ Use separate, unique secrets per environment. Do not commit `.env.local`, `n8n/.
 - **Webhook signatures:** both directions sign `timestamp + "." + raw JSON body` with HMAC-SHA256 and reject timestamps outside a five-minute window. The GET fetch signs an empty body as `timestamp + "."`. Convex compares signatures in constant-time. Use HTTPS in deployment.
 - **Retries and idempotency:** Convex schedules webhook delivery outside the mutation transaction and throws on non-2xx webhook responses so scheduler retries remain visible. n8n HTTP nodes retry transient failures up to five times and save failed executions. Daily reminder keys are `loanId:UTC-date`; Convex enforces uniqueness before writing an activity event, so repeated POSTs on retries do not duplicate that day’s reminder.
 - **Email notifications:** the n8n request webhook and overdue endpoint receive the minimum recipient email addresses needed to send the requested email, plus loan/tool details. These payloads are HMAC-signed and must use HTTPS. Emails are synced from the trusted Clerk JWT identity into member profiles; they are never accepted from client-provided mutation arguments.
+- **Execution data and retention:** successful execution data is not saved. Failed execution data is saved for troubleshooting and can contain webhook payloads, including recipient email addresses and loan details; restrict n8n/PostgreSQL access and configure execution pruning or a retention period appropriate to your environment. The error workflow logs execution metadata rather than copying the original event into its summary.
 - **Authentication setup:** Convex validates Clerk-issued session JWTs and trusts the Clerk-signed primary email and verification claims. Convex deployment variables and n8n SMTP credentials stay out of source control and workflow exports.
 
 ## Production improvements
 
 - Add per-channel opt-in/preferences, delivery receipts, and rate limiting for email notifications.
 - Isolate HMAC signing/verification in a dedicated service or n8n credential integration; restrict n8n workflow authoring, enable SSO/MFA, configure TLS/reverse proxy, and rotate secrets.
+- Minimize failed-execution retention, apply least-privilege access to n8n and its database, and monitor notification delivery without logging message contents or recipient addresses.
 - Add abuse controls (listing/request quotas, moderation, spam reporting), audit administrator actions, and establish retention/deletion policies for borrower history.
 - Add pagination and indexes for large neighborhoods, a timezone-aware due-date policy, integration/e2e tests, monitoring and alerting on Convex scheduler and n8n failures, backups, and disaster recovery.
 - Use managed PostgreSQL with backups and pinned container versions rather than `latest`; use HTTPS and a reachable hosted n8n endpoint.
