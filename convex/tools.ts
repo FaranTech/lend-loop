@@ -3,17 +3,29 @@ import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 
+const ADMIN_EMAIL = "abnazir.ibs@gmail.com";
+
+type UserIdentity = {
+  subject: string;
+  name?: string;
+  email?: string;
+} & Record<string, unknown>;
+
 async function authenticatedUser(ctx: {
-  auth: { getUserIdentity: () => Promise<({ subject: string; name?: string; role?: string } & Record<string, unknown>) | null> };
+  auth: { getUserIdentity: () => Promise<UserIdentity | null> };
 }) {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) throw new Error("You must be signed in.");
   return identity;
 }
 
+function isAdmin(identity: UserIdentity) {
+  return identity.email?.trim().toLowerCase() === ADMIN_EMAIL;
+}
+
 async function adminUser(ctx: Parameters<typeof authenticatedUser>[0]) {
   const identity = await authenticatedUser(ctx);
-  if (identity.role !== "admin") throw new Error("Admin access required.");
+  if (!isAdmin(identity)) throw new Error("Admin access required.");
   return identity;
 }
 
@@ -41,10 +53,10 @@ export const allForMember = query({
       ctx.db.query("profiles").collect(),
     ]);
     const trustedOwners = new Set(profiles.filter((profile) => profile.trustedLender).map((profile) => profile.clerkId));
-    const isAdmin = identity.role === "admin";
+    const admin = isAdmin(identity);
     const ownTools = tools.filter((tool) => tool.ownerId === identity.subject && !tool.archived);
     const visibleTools = tools.filter((tool) => !tool.archived);
-    const relatedLoans = loans.filter((loan) => isAdmin || loan.lenderId === identity.subject || loan.borrowerId === identity.subject);
+    const relatedLoans = loans.filter((loan) => admin || loan.lenderId === identity.subject || loan.borrowerId === identity.subject);
     const events = await ctx.db.query("automationEvents").collect();
     return {
       tools: visibleTools.map((tool) => ({
@@ -60,8 +72,31 @@ export const allForMember = query({
           .slice(0, 3);
         return { ...loan, tool, activity };
       })),
-      isAdmin,
+      isAdmin: admin,
     };
+  },
+});
+
+export const syncProfile = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await authenticatedUser(ctx);
+    const email = identity.email?.trim().toLowerCase();
+    if (!email) throw new Error("Your verified email address is missing from the Clerk Convex token.");
+    const profile = await ctx.db.query("profiles")
+      .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
+      .unique();
+    const values = {
+      displayName: identity.name?.slice(0, 80) || "Neighbor",
+      email,
+      updatedAt: Date.now(),
+    };
+    if (profile) await ctx.db.patch(profile._id, values);
+    else await ctx.db.insert("profiles", {
+      clerkId: identity.subject,
+      ...values,
+      trustedLender: false,
+    });
   },
 });
 
@@ -109,7 +144,7 @@ export const update = mutation({
     const tool = await ctx.db.get(toolId);
     if (!tool) throw new Error("Listing not found.");
     if (tool.archived) throw new Error("This listing has been removed.");
-    if (identity.role !== "admin" && tool.ownerId !== identity.subject) throw new Error("You can only edit your own listings.");
+    if (!isAdmin(identity) && tool.ownerId !== identity.subject) throw new Error("You can only edit your own listings.");
     if (await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", toolId)).filter((q) => q.or(q.eq(q.field("status"), "requested"), q.eq(q.field("status"), "approved"))).first()) {
       throw new Error("This listing has an active request or loan and cannot be edited.");
     }
@@ -137,10 +172,10 @@ export const remove = mutation({
     const identity = await authenticatedUser(ctx);
     const tool = await ctx.db.get(toolId);
     if (!tool) throw new Error("Listing not found.");
-    if (identity.role !== "admin" && tool.ownerId !== identity.subject) throw new Error("You can only remove your own listings.");
+    if (!isAdmin(identity) && tool.ownerId !== identity.subject) throw new Error("You can only remove your own listings.");
     const activeLoan = await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", toolId)).filter((q) => q.or(q.eq(q.field("status"), "requested"), q.eq(q.field("status"), "approved"))).first();
-    if (activeLoan && identity.role !== "admin") throw new Error("A listing with an active request or loan cannot be removed.");
-    if (identity.role === "admin") {
+    if (activeLoan && !isAdmin(identity)) throw new Error("A listing with an active request or loan cannot be removed.");
+    if (isAdmin(identity)) {
       const pendingRequests = await ctx.db.query("loans")
         .withIndex("by_tool", (q) => q.eq("toolId", toolId))
         .filter((q) => q.eq(q.field("status"), "requested"))
@@ -225,12 +260,12 @@ export const updateRequestStatus = mutation({
     const loan = await ctx.db.get(loanId);
     if (!loan) throw new Error("Request not found.");
     if (status === "returned") {
-      if (identity.role !== "admin" && loan.borrowerId !== identity.subject && loan.lenderId !== identity.subject) {
+      if (!isAdmin(identity) && loan.borrowerId !== identity.subject && loan.lenderId !== identity.subject) {
         throw new Error("Only the borrower or lender can mark this loan returned.");
       }
       if (loan.status !== "approved") throw new Error("Only an approved loan can be returned.");
     } else {
-      if (identity.role !== "admin" && loan.lenderId !== identity.subject) throw new Error("Only the lender can respond to this request.");
+      if (!isAdmin(identity) && loan.lenderId !== identity.subject) throw new Error("Only the lender can respond to this request.");
       if (loan.status !== "requested") throw new Error("This request is no longer pending.");
       if (status === "approved") {
         const overlap = await ctx.db.query("loans").withIndex("by_tool", (q) => q.eq("toolId", loan.toolId)).filter((q) =>

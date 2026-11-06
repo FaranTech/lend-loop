@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { useMutation, useQuery } from "convex/react";
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 
@@ -158,12 +158,20 @@ function Dashboard() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const memberData = useQuery(api.tools.allForMember, isSignedIn ? {} : "skip");
+  const syncProfile = useMutation(api.tools.syncProfile);
   const createTool = useMutation(api.tools.create);
   const updateTool = useMutation(api.tools.update);
   const removeTool = useMutation(api.tools.remove);
   const requestBorrow = useMutation(api.tools.requestBorrow);
   const updateRequest = useMutation(api.tools.updateRequestStatus);
   const markTrusted = useMutation(api.tools.markTrustedLender);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn) return;
+    void syncProfile({}).catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : "Could not sync your verified account email.");
+    });
+  }, [isLoaded, isSignedIn, syncProfile]);
 
   const tools = memberData?.tools ?? [];
   const loans = memberData?.loans ?? [];

@@ -22,8 +22,8 @@ export const dispatchRequestNotification = internalAction({
   handler: async (ctx, { loanId, event }) => {
     const webhook = process.env.N8N_REQUEST_WEBHOOK_URL;
     if (!webhook) throw new Error("N8N_REQUEST_WEBHOOK_URL is not configured.");
-    const data = await ctx.runQuery(internal.automation.requestNotificationData, { loanId });
-    if (!data) return;
+    const data = await ctx.runQuery(internal.automation.requestNotificationData, { loanId, event });
+    if (!data) throw new Error(`Request notification data is unavailable for loan ${loanId}.`);
     const body = JSON.stringify({ event, ...data });
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const signature = await hmac(`${timestamp}.${body}`);
@@ -37,22 +37,34 @@ export const dispatchRequestNotification = internalAction({
 });
 
 export const requestNotificationData = internalQuery({
-  args: { loanId: v.id("loans") },
-  handler: async (ctx, { loanId }) => {
+  args: { loanId: v.id("loans"), event: v.string() },
+  handler: async (ctx, { loanId, event }) => {
     const loan = await ctx.db.get(loanId);
     if (!loan) return null;
     const tool = await ctx.db.get(loan.toolId);
     if (!tool) return null;
+    if (!["requested", "approved", "declined", "returned"].includes(event)) {
+      throw new Error(`Unsupported loan notification event: ${event}.`);
+    }
+    const [lender, borrower] = await Promise.all([
+      ctx.db.query("profiles").withIndex("by_clerk_id", (q) => q.eq("clerkId", loan.lenderId)).unique(),
+      ctx.db.query("profiles").withIndex("by_clerk_id", (q) => q.eq("clerkId", loan.borrowerId)).unique(),
+    ]);
+    const recipients = event === "requested"
+      ? [lender?.email]
+      : event === "returned"
+        ? [lender?.email, borrower?.email]
+        : [borrower?.email];
+    if (recipients.some((email) => !email)) {
+      throw new Error(`A recipient email is unavailable for loan ${loanId}; ask the user to sign in again.`);
+    }
     return {
       loanId,
       toolName: tool.name,
-      category: tool.category,
-      lenderId: loan.lenderId,
-      borrowerId: loan.borrowerId,
-      borrowerName: loan.borrowerName,
       startDate: loan.startDate,
       endDate: loan.endDate,
-      status: loan.status,
+      status: event,
+      recipients,
     };
   },
 });
@@ -64,13 +76,16 @@ export const overdueLoans = internalQuery({
     const overdue = loans.filter((loan) => loan.endDate < today);
     return Promise.all(overdue.map(async (loan) => {
       const tool = await ctx.db.get(loan.toolId);
+      const [lender, borrower] = await Promise.all([
+        ctx.db.query("profiles").withIndex("by_clerk_id", (q) => q.eq("clerkId", loan.lenderId)).unique(),
+        ctx.db.query("profiles").withIndex("by_clerk_id", (q) => q.eq("clerkId", loan.borrowerId)).unique(),
+      ]);
       const events = await ctx.db.query("automationEvents").withIndex("by_loan", (q) => q.eq("loanId", loan._id)).collect();
       return {
         loanId: loan._id,
         toolName: tool?.name ?? "Borrowed tool",
-        borrowerId: loan.borrowerId,
-        borrowerName: loan.borrowerName,
         endDate: loan.endDate,
+        recipients: [borrower?.email, lender?.email].filter((email): email is string => Boolean(email)),
         idempotencyKey: `${loan._id}:${today}`,
         reminderSentToday: events.some((event) => event.idempotencyKey === `${loan._id}:${today}`),
       };

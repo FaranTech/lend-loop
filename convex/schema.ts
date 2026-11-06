@@ -37,6 +37,7 @@ export default defineSchema({
   profiles: defineTable({
     clerkId: v.string(),
     displayName: v.string(),
+    email: v.optional(v.string()),
     trustedLender: v.boolean(),
     updatedAt: v.number(),
   }).index("by_clerk_id", ["clerkId"]),

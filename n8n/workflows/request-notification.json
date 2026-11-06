@@ -18,7 +18,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const crypto = require('crypto');\nconst event = $json.body ?? $json;\nconst timestamp = String($json.headers?.['x-lendloop-timestamp'] ?? '');\nconst signature = String($json.headers?.['x-lendloop-signature'] ?? '');\nconst now = Math.floor(Date.now() / 1000);\nif (!/^\\d{10}$/.test(timestamp) || Math.abs(now - Number(timestamp)) > 300) throw new Error('Rejected stale or invalid LendLoop timestamp');\nconst body = JSON.stringify(event);\nconst expected = crypto.createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nconst suppliedBuffer = Buffer.from(signature, 'hex');\nconst expectedBuffer = Buffer.from(expected, 'hex');\nif (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) throw new Error('Invalid LendLoop HMAC signature');\nif (!event.loanId || !event.event || !event.toolName) throw new Error('Missing minimal request event fields');\nreturn { json: { event: event.event, loanId: event.loanId, toolName: event.toolName, category: event.category, borrowerName: event.borrowerName, borrowerId: event.borrowerId, lenderId: event.lenderId, startDate: event.startDate, endDate: event.endDate, status: event.status, receivedAt: new Date().toISOString() } };"
+        "jsCode": "const crypto = require('crypto');\nconst event = $json.body ?? $json;\nconst timestamp = String($json.headers?.['x-lendloop-timestamp'] ?? '');\nconst signature = String($json.headers?.['x-lendloop-signature'] ?? '');\nconst now = Math.floor(Date.now() / 1000);\nif (!/^\\d{10}$/.test(timestamp) || Math.abs(now - Number(timestamp)) > 300) throw new Error('Rejected stale or invalid LendLoop timestamp');\nconst body = JSON.stringify(event);\nconst expected = crypto.createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nif (!/^[a-f0-9]{64}$/.test(signature)) throw new Error('Invalid LendLoop HMAC signature');\nconst suppliedBuffer = Buffer.from(signature, 'hex');\nconst expectedBuffer = Buffer.from(expected, 'hex');\nif (!crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) throw new Error('Invalid LendLoop HMAC signature');\nif (typeof event.loanId !== 'string' || !event.loanId || typeof event.toolName !== 'string' || !event.toolName || typeof event.startDate !== 'string' || typeof event.endDate !== 'string' || !['requested', 'approved', 'declined', 'returned'].includes(event.event) || event.status !== event.event || !Array.isArray(event.recipients) || event.recipients.length === 0 || event.recipients.some((email) => typeof email !== 'string' || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email))) throw new Error('Invalid request event fields or recipient addresses');\nconst labels = { requested: 'New borrowing request', approved: 'Borrowing request approved', declined: 'Borrowing request declined', returned: 'Tool marked as returned' };\nconst subject = `LendLoop: ${labels[event.event]}`;\nconst message = `Hello,\\n\\n${labels[event.event]}.\\n\\nTool: ${event.toolName}\\nDates: ${event.startDate} to ${event.endDate}\\nRequest: ${event.loanId}\\n\\nOpen LendLoop to view the details.`;\nreturn { json: { to: event.recipients.join(', '), subject, message } };"
       },
       "id": "d58aab8f-f216-4bab-9ff6-4d05533ff020",
       "name": "Verify HMAC and minimize payload",
@@ -28,13 +28,17 @@
     },
     {
       "parameters": {
-        "mode": "runOnceForEachItem",
-        "jsCode": "const { event, toolName, borrowerName, startDate, endDate, status, loanId } = $json;\nconst message = `LendLoop ${event}: ${toolName} (${startDate} to ${endDate}), status ${status}. Request ${loanId}.`;\nconsole.log(JSON.stringify({ notification: message, recipientRole: event === 'requested' ? 'lender' : 'request participants' }));\nreturn { json: { notification: message, loanId, event, status, loggedAt: new Date().toISOString() } };"
+        "fromEmail": "={{ $env.LENDLOOP_EMAIL_FROM }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {}
       },
       "id": "1df7a185-c719-4a14-9e2f-a8ae00c62e53",
-      "name": "Log mock notification",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "name": "Send loan event email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
       "position": [740, 300]
     }
   ],
@@ -43,7 +47,7 @@
       "main": [[{ "node": "Verify HMAC and minimize payload", "type": "main", "index": 0 }]]
     },
     "Verify HMAC and minimize payload": {
-      "main": [[{ "node": "Log mock notification", "type": "main", "index": 0 }]]
+      "main": [[{ "node": "Send loan event email", "type": "main", "index": 0 }]]
     }
   },
   "active": false,

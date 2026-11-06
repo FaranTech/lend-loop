@@ -57,7 +57,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const loan = $json;\nif (!loan.loanId || !loan.borrowerId || !loan.idempotencyKey) throw new Error('Overdue response is missing a required field');\nconst reminder = { loanId: loan.loanId, idempotencyKey: loan.idempotencyKey };\nconsole.log(JSON.stringify({ reminder: `Please return ${loan.toolName}, due ${loan.endDate}.`, borrowerId: loan.borrowerId, loanId: loan.loanId, idempotencyKey: loan.idempotencyKey }));\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst body = JSON.stringify(reminder);\nconst signature = require('crypto').createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nreturn { json: { ...reminder, timestamp, signature, mockNotification: `Please return ${loan.toolName}, due ${loan.endDate}.` } };"
+        "jsCode": "const loan = $json;\nif (!loan.loanId || !loan.idempotencyKey || !Array.isArray(loan.recipients) || loan.recipients.length === 0 || loan.recipients.some((email) => typeof email !== 'string' || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email))) throw new Error('Overdue response is missing valid recipient addresses or required fields');\nconst reminder = { loanId: loan.loanId, idempotencyKey: loan.idempotencyKey };\nconst timestamp = String(Math.floor(Date.now() / 1000));\nconst body = JSON.stringify(reminder);\nconst signature = require('crypto').createHmac('sha256', $env.LENDLOOP_N8N_SECRET).update(`${timestamp}.${body}`).digest('hex');\nreturn { json: { ...reminder, timestamp, signature, to: loan.recipients.join(', '), subject: 'LendLoop: overdue tool reminder', message: `Hello,\\n\\nPlease return ${loan.toolName}, which was due on ${loan.endDate}.\\n\\nOpen LendLoop to view the loan details.` } };"
       },
       "id": "f3484b54-718b-47a2-88e8-92c7a8a06a96",
       "name": "Prepare reminder and sign write-back",
@@ -67,27 +67,42 @@
     },
     {
       "parameters": {
+        "fromEmail": "={{ $env.LENDLOOP_EMAIL_FROM }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "d349994a-5f29-427c-8459-6ba55c4f05ac",
+      "name": "Send overdue reminder email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [1380, 320]
+    },
+    {
+      "parameters": {
         "method": "POST",
         "url": "={{ $env.CONVEX_HTTP_ACTIONS_URL + '/automation/reminder' }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             { "name": "content-type", "value": "application/json" },
-            { "name": "x-lendloop-timestamp", "value": "={{ $json.timestamp }}" },
-            { "name": "x-lendloop-signature", "value": "={{ $json.signature }}" }
+            { "name": "x-lendloop-timestamp", "value": "={{ $('Prepare reminder and sign write-back').item.json.timestamp }}" },
+            { "name": "x-lendloop-signature", "value": "={{ $('Prepare reminder and sign write-back').item.json.signature }}" }
           ]
         },
         "sendBody": true,
         "contentType": "raw",
         "rawContentType": "application/json",
-        "body": "={{ JSON.stringify({ loanId: $json.loanId, idempotencyKey: $json.idempotencyKey }) }}",
+        "body": "={{ JSON.stringify({ loanId: $('Prepare reminder and sign write-back').item.json.loanId, idempotencyKey: $('Prepare reminder and sign write-back').item.json.idempotencyKey }) }}",
         "options": { "response": { "response": { "neverError": false } }, "timeout": 30000 }
       },
       "id": "f272fd7e-2b18-49b3-9bc5-9d8b8b07dd6b",
       "name": "Record reminder in Convex",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1400, 320],
+      "position": [1620, 320],
       "retryOnFail": true,
       "maxTries": 5,
       "waitBetweenTries": 5000
@@ -98,7 +113,8 @@
     "Sign overdue fetch": { "main": [[{ "node": "Fetch overdue loans", "type": "main", "index": 0 }]] },
     "Fetch overdue loans": { "main": [[{ "node": "Split overdue loans", "type": "main", "index": 0 }]] },
     "Split overdue loans": { "main": [[{ "node": "Prepare reminder and sign write-back", "type": "main", "index": 0 }]] },
-    "Prepare reminder and sign write-back": { "main": [[{ "node": "Record reminder in Convex", "type": "main", "index": 0 }]] }
+    "Prepare reminder and sign write-back": { "main": [[{ "node": "Send overdue reminder email", "type": "main", "index": 0 }]] },
+    "Send overdue reminder email": { "main": [[{ "node": "Record reminder in Convex", "type": "main", "index": 0 }]] }
   },
   "active": false,
   "settings": {

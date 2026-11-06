@@ -11,15 +11,29 @@ function getSecret() {
 }
 
 async function verifySignature(timestamp: string | null, signature: string | null, body: string) {
-  if (!timestamp || !signature || !/^\d{10}$/.test(timestamp)) return false;
+  if (!timestamp || !/^\d{10}$/.test(timestamp)) {
+    console.warn("Rejected n8n request: missing or invalid timestamp header.");
+    return false;
+  }
+  if (!signature || !/^[a-f0-9]{64}$/.test(signature)) {
+    console.warn("Rejected n8n request: missing or invalid signature header.");
+    return false;
+  }
   const seconds = Number(timestamp);
-  if (Math.abs(Date.now() / 1000 - seconds) > 300) return false;
+  if (Math.abs(Date.now() / 1000 - seconds) > 300) {
+    console.warn("Rejected n8n request: timestamp is outside the five-minute window.");
+    return false;
+  }
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(getSecret()), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const raw = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`${timestamp}.${body}`));
   const expected = Array.from(new Uint8Array(raw), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  if (signature.length !== expected.length) return false;
+  if (signature.length !== expected.length) {
+    console.warn("Rejected n8n request: signature length mismatch.");
+    return false;
+  }
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+  if (diff !== 0) console.warn("Rejected n8n request: HMAC signature mismatch.");
   return diff === 0;
 }
 
@@ -35,9 +49,8 @@ http.route({
     return Response.json(loans.filter((loan) => !loan.reminderSentToday).map((loan) => ({
       loanId: loan.loanId,
       toolName: loan.toolName,
-      borrowerId: loan.borrowerId,
-      borrowerName: loan.borrowerName,
       endDate: loan.endDate,
+      recipients: loan.recipients,
       idempotencyKey: loan.idempotencyKey,
     })));
   }),
