@@ -9,11 +9,11 @@ type UserIdentity = {
   subject: string;
   name?: string;
   email?: string;
-  email_verified?: boolean;
+  email_verified?: boolean | string;
 } & Record<string, unknown>;
 
 const missingVerifiedEmailMessage =
-  'Your verified email is missing from the Clerk "convex" JWT template. In Clerk, configure that template to include "email": "{{user.primary_email_address}}" and "email_verified": "{{user.email_verified}}", then sign out and back in.';
+  'Your verified email is missing from the Clerk "convex" JWT template. Configure that template to include "email": "{{user.primary_email_address}}" and "email_verified": "{{user.email_verified}}", then sign out and back in.';
 
 async function authenticatedUser(ctx: {
   auth: { getUserIdentity: () => Promise<UserIdentity | null> };
@@ -24,8 +24,12 @@ async function authenticatedUser(ctx: {
 }
 
 function isAdmin(identity: UserIdentity) {
-  return identity.email_verified === true
+  return isVerifiedEmail(identity)
     && identity.email?.trim().toLowerCase() === ADMIN_EMAIL;
+}
+
+function isVerifiedEmail(identity: UserIdentity) {
+  return identity.email_verified === true || identity.email_verified === "true";
 }
 
 async function adminUser(ctx: Parameters<typeof authenticatedUser>[0]) {
@@ -87,7 +91,7 @@ export const syncProfile = mutation({
   handler: async (ctx) => {
     const identity = await authenticatedUser(ctx);
     const email = identity.email?.trim().toLowerCase();
-    if (!email || identity.email_verified !== true) {
+    if (!email || !isVerifiedEmail(identity)) {
       throw new Error(missingVerifiedEmailMessage);
     }
     const profile = await ctx.db.query("profiles")
