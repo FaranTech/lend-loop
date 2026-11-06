@@ -30,16 +30,17 @@ Prerequisites: Node.js 20.9+, npm, Docker Compose, a Clerk application, and a Co
    npx convex dev
    ```
 
-   In Clerk, create a JWT template named `convex` with the following claims:
+   In Clerk, activate the Convex integration and configure `convex/auth.config.ts` with the Clerk issuer domain and application ID `convex`. Then, in **Configure → Sessions → Customize session token**, preserve the managed audience claim and include:
 
    ```json
    {
+     "aud": "convex",
      "email": "{{user.primary_email_address}}",
      "email_verified": "{{user.email_verified}}"
    }
    ```
 
-   The app explicitly requests this template for Convex authentication, even when Clerk's Convex integration adds `aud: "convex"` to its session token. Sign out and back in after changing the template. The app trusts only a Clerk-signed, verified email claim; only `abnazir.ibs@gmail.com` is the administrator, and all other signed-in accounts are regular users.
+   Save the session-token settings, then sign out and back in so Clerk issues a refreshed token. The app trusts only a Clerk-signed, verified email claim; only `abnazir.ibs@gmail.com` is the administrator, and all other signed-in accounts are regular users.
 
    Set the backend-only signing secret:
 

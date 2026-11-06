@@ -8,15 +8,6 @@ import { useState } from "react";
 const publishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
 
-function useConvexTemplateAuth() {
-  const auth = useAuth();
-  return {
-    ...auth,
-    getToken: (options: Parameters<typeof auth.getToken>[0]) =>
-      auth.getToken({ ...options, template: "convex" }),
-  };
-}
-
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(() => convexUrl ? new ConvexReactClient(convexUrl) : null);
   if (!client) return children;
@@ -24,7 +15,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <ClerkProvider publishableKey={publishableKey}>
-      <ConvexProviderWithClerk client={client} useAuth={useConvexTemplateAuth}>
+      <ConvexProviderWithClerk client={client} useAuth={useAuth}>
         {children}
       </ConvexProviderWithClerk>
     </ClerkProvider>

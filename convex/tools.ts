@@ -1,19 +1,12 @@
 import { v } from "convex/values";
+import type { UserIdentity as ConvexUserIdentity } from "convex/server";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 
 const ADMIN_EMAIL = "abnazir.ibs@gmail.com";
 
-type UserIdentity = {
-  subject: string;
-  name?: string;
-  email?: string;
-  email_verified?: boolean | string;
-} & Record<string, unknown>;
-
-const missingVerifiedEmailMessage =
-  'Your verified email is missing from the Clerk "convex" JWT template. Configure that template to include "email": "{{user.primary_email_address}}" and "email_verified": "{{user.email_verified}}", then sign out and back in.';
+type UserIdentity = Pick<ConvexUserIdentity, "subject" | "name" | "email" | "emailVerified">;
 
 async function authenticatedUser(ctx: {
   auth: { getUserIdentity: () => Promise<UserIdentity | null> };
@@ -29,7 +22,7 @@ function isAdmin(identity: UserIdentity) {
 }
 
 function isVerifiedEmail(identity: UserIdentity) {
-  return identity.email_verified === true || identity.email_verified === "true";
+  return identity.emailVerified === true;
 }
 
 async function adminUser(ctx: Parameters<typeof authenticatedUser>[0]) {
@@ -92,7 +85,13 @@ export const syncProfile = mutation({
     const identity = await authenticatedUser(ctx);
     const email = identity.email?.trim().toLowerCase();
     if (!email || !isVerifiedEmail(identity)) {
-      throw new Error(missingVerifiedEmailMessage);
+      const emailClaim = email ? "present" : "missing";
+      const verifiedClaim = identity.emailVerified === undefined
+        ? "missing"
+        : `${typeof identity.emailVerified}:${String(identity.emailVerified)}`;
+      throw new Error(
+        `Clerk Convex identity claims are incomplete (email: ${emailClaim}; email_verified: ${verifiedClaim}). In Clerk's session-token customization, preserve "aud": "convex" and include "email": "{{user.primary_email_address}}" and "email_verified": "{{user.email_verified}}", then refresh your sign-in.`,
+      );
     }
     const profile = await ctx.db.query("profiles")
       .withIndex("by_clerk_id", (q) => q.eq("clerkId", identity.subject))
