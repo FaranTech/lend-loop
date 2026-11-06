@@ -30,7 +30,16 @@ Prerequisites: Node.js 20.9+, npm, Docker Compose, a Clerk application, and a Co
    npx convex dev
    ```
 
-   In Clerk, create a JWT template named `convex`, using the Convex issuer/audience setup. Include a top-level `email` claim from the account’s primary email (for example `"email": "{{user.primary_email_address}}"`). Configure `convex/auth.config.ts` with the Clerk issuer domain and keep the template application ID as `convex`. Convex treats only `abnazir.ibs@gmail.com` as the administrator; every other signed-in account is a regular user. The email claim must come from the trusted Clerk template, never client input.
+   In Clerk, create a JWT template named `convex` with the following claims:
+
+   ```json
+   {
+     "email": "{{user.primary_email_address}}",
+     "email_verified": "{{user.email_verified}}"
+   }
+   ```
+
+   The app explicitly requests this template for Convex authentication, even when Clerk's Convex integration adds `aud: "convex"` to its session token. Sign out and back in after changing the template. The app trusts only a Clerk-signed, verified email claim; only `abnazir.ibs@gmail.com` is the administrator, and all other signed-in accounts are regular users.
 
    Set the backend-only signing secret:
 
@@ -94,7 +103,7 @@ Use separate, unique secrets per environment. Do not commit `.env.local`, `n8n/.
 - **Webhook signatures:** both directions sign `timestamp + "." + raw JSON body` with HMAC-SHA256 and reject timestamps outside a five-minute window. The GET fetch signs an empty body as `timestamp + "."`. Convex compares signatures in constant-time. Use HTTPS in deployment.
 - **Retries and idempotency:** Convex schedules webhook delivery outside the mutation transaction and throws on non-2xx webhook responses so scheduler retries remain visible. n8n HTTP nodes retry transient failures up to five times and save failed executions. Daily reminder keys are `loanId:UTC-date`; Convex enforces uniqueness before writing an activity event, so repeated POSTs on retries do not duplicate that day’s reminder.
 - **Email notifications:** the n8n request webhook and overdue endpoint receive the minimum recipient email addresses needed to send the requested email, plus loan/tool details. These payloads are HMAC-signed and must use HTTPS. Emails are synced from the trusted Clerk JWT identity into member profiles; they are never accepted from client-provided mutation arguments.
-- **Authentication setup:** Convex validates Clerk-issued JWTs and trusts the Clerk-signed primary email claim. Convex deployment variables and n8n SMTP credentials stay out of source control and workflow exports.
+- **Authentication setup:** Convex validates Clerk-issued session JWTs and trusts the Clerk-signed primary email and verification claims. Convex deployment variables and n8n SMTP credentials stay out of source control and workflow exports.
 
 ## Production improvements
 
